@@ -133,8 +133,9 @@ static int gpt_header_is_valid(struct gpt_header *header, uint32_t lbsize)
     return 0;
 }
 
-int gpt_open(struct gpt *gpt, const char *dev)
+int gpt_open(struct gpt *gpt, const char *pathname)
 {
+    int fd;
     int rc;
     off64_t off;
     byte buf[MAX_LBSIZE];
@@ -147,13 +148,14 @@ int gpt_open(struct gpt *gpt, const char *dev)
 
     memset(gpt, 0, sizeof(struct gpt));
 
-    gpt->fd = open(dev, O_RDWR);
-    if (gpt->fd < 0) {
+    gpt->pathname = strdup(pathname);
+    fd = open(gpt->pathname, O_RDNOLY);
+    if (fd < 0) {
         perror("open");
         return -1;
     }
 
-    rc = fstat(gpt->fd, &st);
+    rc = fstat(fd, &st);
     if (rc != 0) {
         perror("fstat");
         return -1;
@@ -163,27 +165,27 @@ int gpt_open(struct gpt *gpt, const char *dev)
     if (S_ISBLK(st.st_mode)) {
         unsigned long blklen;
         /* XXX: Linux LB size is always 512? */
-        if (ioctl(gpt->fd, BLKGETSIZE, &blklen, sizeof(blklen)) == 0) {
+        if (ioctl(fd, BLKGETSIZE, &blklen, sizeof(blklen)) == 0) {
             gpt->lblen = blklen;
         }
     }
 
-    off = lseek64(gpt->fd, 1*gpt->lbsize, SEEK_SET);
+    off = lseek64(fd, 1*gpt->lbsize, SEEK_SET);
     if (off < 0) {
         perror("lseek");
-        close(gpt->fd);
+        close(fd);
         return -1;
     }
-    rc = read(gpt->fd, buf, gpt->lbsize);
+    rc = read(fd, buf, gpt->lbsize);
     if (rc != (ssize_t)gpt->lbsize) {
         fprintf(stderr, "bad read\n");
-        close(gpt->fd);
+        close(fd);
         return -1;
     }
     memcpy(&gpt->header, buf, sizeof(struct gpt_header));
     if (gpt_header_is_valid(&gpt->header, gpt->lbsize) != 0) {
         fprintf(stderr, "bad gpt header\n");
-        close(gpt->fd);
+        close(fd);
         return -1;
     }
 #if defined(ANDROID) && defined(QCOM)
@@ -221,12 +223,12 @@ primary_header_out:
     if (S_ISBLK(st.st_mode) &&
             gpt->header.backup_lba > 2 &&
             gpt->header.backup_lba < gpt->lblen) {
-        off = lseek64(gpt->fd, gpt->header.backup_lba * gpt->lbsize, SEEK_SET);
+        off = lseek64(fd, gpt->header.backup_lba * gpt->lbsize, SEEK_SET);
         if (off < 0) {
             fprintf(stderr, "bad backup seek\n");
             goto backup_header_out;
         }
-        rc = read(gpt->fd, buf, gpt->lbsize);
+        rc = read(fd, buf, gpt->lbsize);
         if (rc != (ssize_t)gpt->lbsize) {
             fprintf(stderr, "bad backup read\n");
             goto backup_header_out;
@@ -268,10 +270,10 @@ backup_header_out:
     next_lba = gpt->header.first_usable_lba;
 
     if (primary_header_valid) {
-        off = lseek64(gpt->fd, gpt->header.ptbl_lba * gpt->lbsize, SEEK_SET);
+        off = lseek64(fd, gpt->header.ptbl_lba * gpt->lbsize, SEEK_SET);
         if (off < 0) {
             perror("lseek\n");
-            close(gpt->fd);
+            close(fd);
             return -1;
         }
 
@@ -279,10 +281,10 @@ backup_header_out:
         for (n = 0; n < gpt->header.ptbl_count; ++n) {
             gpt->partitions[n] = (struct gpt_partition *)malloc(sizeof(struct gpt_partition));
             memset(gpt->partitions[n], 0, sizeof(struct gpt_partition));
-            rc = read(gpt->fd, gpt->partitions[n], gpt->header.ptbl_entry_size);
+            rc = read(fd, gpt->partitions[n], gpt->header.ptbl_entry_size);
             if (rc < 0 || (uint32_t)rc != gpt->header.ptbl_entry_size) {
                 fprintf(stderr, "failed to read partition entry %u\n", n);
-                close(gpt->fd);
+                close(fd);
                 return -1;
             }
             calc_crc = crc32(calc_crc, gpt->partitions[n], gpt->header.ptbl_entry_size);
@@ -293,7 +295,7 @@ backup_header_out:
                     gpt->partitions[n]->last_lba < gpt->partitions[n]->first_lba ||
                     gpt->partitions[n]->last_lba > gpt->header.last_usable_lba) {
                 fprintf(stderr, "bad lba in partition entry %u\n", n);
-                close(gpt->fd);
+                close(fd);
                 return -1;
             }
             gpt->last_used_idx = n;
@@ -301,26 +303,26 @@ backup_header_out:
 
         if (gpt->header.ptbl_crc != calc_crc) {
             fprintf(stderr, "bad ptbl crc\n");
-            close(gpt->fd);
+            close(fd);
             return -1;
         }
     }
 
     if (backup_header_valid) {
         int warned = 0;
-        off = lseek64(gpt->fd, gpt->backup_header.ptbl_lba * gpt->lbsize, SEEK_SET);
+        off = lseek64(fd, gpt->backup_header.ptbl_lba * gpt->lbsize, SEEK_SET);
         if (off < 0) {
             perror("lseek\n");
-            close(gpt->fd);
+            close(fd);
             return -1;
         }
         calc_crc = 0;
         for (n = 0; n < gpt->backup_header.ptbl_count; ++n) {
             struct gpt_partition backup_part;
-            rc = read(gpt->fd, &backup_part, gpt->backup_header.ptbl_entry_size);
+            rc = read(fd, &backup_part, gpt->backup_header.ptbl_entry_size);
             if (rc < 0 || (uint32_t)rc != gpt->backup_header.ptbl_entry_size) {
                 fprintf(stderr, "failed to read backup partition entry %u\n", n);
-                close(gpt->fd);
+                close(fd);
                 return -1;
             }
             if (memcmp(gpt->partitions[n], &backup_part, sizeof(struct gpt_partition)) != 0) {
@@ -336,20 +338,29 @@ backup_header_out:
     gpt->pad_idx = gpt_part_find(gpt, "pad");
     if (gpt->pad_idx == GPT_PART_INVALID) {
         fprintf(stderr, "no pad found\n");
-        close(gpt->fd);
+        close(fd);
         return -1;
     }
 #endif
+
+    close(fd);
 
     return 0;
 }
 
 int gpt_write(const struct gpt *gpt)
 {
+    int fd;
     int rc;
     off64_t off;
     struct gpt_header hdr;
     uint32_t n;
+
+    fd = open(gpt->pathname, O_RDWR);
+    if (fd < 0) {
+        fprintf(stderr, "failed to open %s\n", gpt->pathname);
+        return -1;
+    }
 
     memcpy(&hdr, &gpt->header, sizeof(hdr));
 
@@ -361,25 +372,25 @@ int gpt_write(const struct gpt *gpt)
     hdr.crc = 0;
     hdr.crc = crc32(0, &hdr, hdr.size);
 
-    off = lseek64(gpt->fd, hdr.current_lba * gpt->lbsize, SEEK_SET);
+    off = lseek64(fd, hdr.current_lba * gpt->lbsize, SEEK_SET);
     if (off < 0) {
         perror("lseek");
         return -1;
     }
-    rc = write(gpt->fd, &hdr, hdr.size);
+    rc = write(fd, &hdr, hdr.size);
     if (rc < 0 || (uint32_t)rc != hdr.size) {
         fprintf(stderr, "bad primary header write\n");
         return -1;
     }
 
-    off = lseek64(gpt->fd, hdr.ptbl_lba * gpt->lbsize, SEEK_SET);
+    off = lseek64(fd, hdr.ptbl_lba * gpt->lbsize, SEEK_SET);
     if (off < 0) {
         perror("lseek\n");
         return -1;
     }
 
     for (n = 0; n < hdr.ptbl_count; ++n) {
-        rc = write(gpt->fd, gpt->partitions[n], hdr.ptbl_entry_size);
+        rc = write(fd, gpt->partitions[n], hdr.ptbl_entry_size);
         if (rc < 0 || (uint32_t)rc != hdr.ptbl_entry_size) {
             fprintf(stderr, "bad primary partition write\n");
             return -1;
@@ -394,42 +405,42 @@ int gpt_write(const struct gpt *gpt)
     hdr.crc = 0;
     hdr.crc = crc32(0, &hdr, hdr.size);
 
-    off = lseek64(gpt->fd, hdr.current_lba * gpt->lbsize, SEEK_SET);
+    off = lseek64(fd, hdr.current_lba * gpt->lbsize, SEEK_SET);
     if (off < 0) {
         perror("lseek");
         return -1;
     }
-    rc = write(gpt->fd, &hdr, hdr.size);
+    rc = write(fd, &hdr, hdr.size);
     if (rc < 0 || (uint32_t)rc != hdr.size) {
         fprintf(stderr, "bad backup header write\n");
         return -1;
     }
 
-    off = lseek64(gpt->fd, hdr.ptbl_lba * gpt->lbsize, SEEK_SET);
+    off = lseek64(fd, hdr.ptbl_lba * gpt->lbsize, SEEK_SET);
     if (off < 0) {
         perror("lseek\n");
         return -1;
     }
 
     for (n = 0; n < hdr.ptbl_count; ++n) {
-        rc = write(gpt->fd, gpt->partitions[n], hdr.ptbl_entry_size);
+        rc = write(fd, gpt->partitions[n], hdr.ptbl_entry_size);
         if (rc < 0 || (uint32_t)rc != hdr.ptbl_entry_size) {
             fprintf(stderr, "bad backup partition write\n");
             return -1;
         }
     }
 
+    close(fd);
+
     return 0;
 }
 
 int gpt_close(struct gpt *gpt)
 {
-    int rc;
+    free(gpt->pathname);
+    gpt->pathname = NULL;
 
-    rc = close(gpt->fd);
-    gpt->fd = -1;
-
-    return rc;
+    return 0;
 }
 
 void gpt_show(const struct gpt *gpt)
@@ -645,19 +656,24 @@ int gpt_part_resize(struct gpt *gpt, uint32_t idx, uint64_t size, int follow)
 
 int gpt_part_save(struct gpt *gpt, uint32_t idx, const char *filename)
 {
+    int ifd, ofd;
     uint64_t remain;
-    int fd;
     char buf[4096];
 
-    if (lseek64(gpt->fd,
+    ifd = open(gpt->pathname, O_RDONLY);
+    if (ifd < 0) {
+        return -1;
+    }
+
+    if (lseek64(ifd,
             gpt->partitions[idx]->first_lba * gpt->lbsize,
             SEEK_SET) < 0) {
         return -1;
     }
     remain = gpt_part_size(gpt, idx);
 
-    fd = open(filename, O_WRONLY | O_CREAT, 0666);
-    if (fd < 0) {
+    ofd = open(filename, O_WRONLY | O_CREAT, 0666);
+    if (ofd < 0) {
         return -1;
     }
 
@@ -665,44 +681,51 @@ int gpt_part_save(struct gpt *gpt, uint32_t idx, const char *filename)
         size_t toread;
         ssize_t nread, nwritten;
         toread = (remain > sizeof(buf) ? sizeof(buf) : remain);
-        nread = read(gpt->fd, buf, toread);
+        nread = read(ifd, buf, toread);
         if (nread <= 0) {
             goto out_err;
         }
-        nwritten = write(fd, buf, nread);
+        nwritten = write(ofd, buf, nread);
         if (nwritten != nread) {
             goto out_err;
         }
         remain -= nread;
     }
-    close(fd);
+    close(ofd);
+    close(ifd);
 
     return 0;
 
 out_err:
-    close(fd);
+    close(ofd);
+    close(ifd);
     return -1;
 }
 
 int gpt_part_load(struct gpt *gpt, uint32_t idx, const char *filename)
 {
+    int ifd, ofd;
     uint64_t remain;
-    int fd;
     struct stat st;
     char buf[4096];
 
-    if (lseek64(gpt->fd,
+    ofd = open(gpt->pathname, O_RDWR);
+    if (ofd < 0) {
+        return -1;
+    }
+
+    if (lseek64(ofd,
             gpt->partitions[idx]->first_lba * gpt->lbsize,
             SEEK_SET) < 0) {
         return -1;
     }
     remain = gpt_part_size(gpt, idx);
 
-    fd = open(filename, O_RDONLY);
-    if (fd < 0) {
+    ifd = open(filename, O_RDONLY);
+    if (ifd < 0) {
         return -1;
     }
-    if (fstat(fd, &st) != 0) {
+    if (fstat(ifd, &st) != 0) {
         perror("fstat");
         goto out_err;
     }
@@ -715,21 +738,23 @@ int gpt_part_load(struct gpt *gpt, uint32_t idx, const char *filename)
         size_t toread;
         ssize_t nread, nwritten;
         toread = (remain > sizeof(buf) ? sizeof(buf) : remain);
-        nread = read(fd, buf, toread);
+        nread = read(ifd, buf, toread);
         if (nread <= 0) {
             goto out_err;
         }
-        nwritten = write(gpt->fd, buf, nread);
+        nwritten = write(ofd, buf, nread);
         if (nwritten != nread) {
             goto out_err;
         }
         remain -= nread;
     }
-    close(fd);
+    close(ofd);
+    close(ifd);
 
     return 0;
 
 out_err:
-    close(fd);
+    close(ofd);
+    close(ifd);
     return -1;
 }

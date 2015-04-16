@@ -47,7 +47,7 @@ struct gpt_partition
 
 struct gpt
 {
-    int                         fd;
+    char                        *pathname;
     uint32_t                    lbsize;
     uint32_t                    lblen;
     struct gpt_header           header;
@@ -59,7 +59,7 @@ struct gpt
     struct gpt_partition*       partitions[GPT_MAX_PARTITIONS];
 };
 
-int gpt_open(struct gpt *gpt, const char *dev);
+int gpt_open(struct gpt *gpt, const char *pathname);
 int gpt_write(const struct gpt *gpt);
 int gpt_close(struct gpt *gpt);
 void gpt_show(const struct gpt *gpt);
