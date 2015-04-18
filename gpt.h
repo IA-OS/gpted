@@ -51,7 +51,6 @@ struct gpt
     uint32_t                    lbsize;
     uint32_t                    lblen;
     struct gpt_header           header;
-    struct gpt_header           backup_header;
 #if defined(ANDROID) && defined(QCOM)
     uint32_t                    pad_idx;
 #endif
@@ -60,7 +59,7 @@ struct gpt
 };
 
 int gpt_open(struct gpt *gpt, const char *pathname);
-int gpt_write(const struct gpt *gpt);
+int gpt_write(struct gpt *gpt);
 int gpt_close(struct gpt *gpt);
 void gpt_show(const struct gpt *gpt);
 

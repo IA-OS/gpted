@@ -143,13 +143,12 @@ int gpt_open(struct gpt *gpt, const char *pathname)
     uint64_t next_lba;
     uint32_t n;
     struct stat st;
-    int primary_header_valid = 0;
-    int backup_header_valid = 0;
+    struct gpt_header backup_header;
 
     memset(gpt, 0, sizeof(struct gpt));
 
     gpt->pathname = strdup(pathname);
-    fd = open(gpt->pathname, O_RDNOLY);
+    fd = open(gpt->pathname, O_RDONLY);
     if (fd < 0) {
         perror("open");
         return -1;
@@ -199,7 +198,12 @@ int gpt_open(struct gpt *gpt, const char *pathname)
             gpt->header.ptbl_count > GPT_MAX_PARTITIONS ||
             gpt->header.ptbl_entry_size > gpt->lbsize) {
         fprintf(stderr, "W: bad primary gpt\n");
-        goto primary_header_out;
+    }
+    gpt->pad_idx = gpt_part_find(gpt, "pad");
+    if (gpt->pad_idx == GPT_PART_INVALID) {
+        fprintf(stderr, "no pad found\n");
+        close(fd);
+        return -1;
     }
 #else
     if (gpt->header.current_lba != 1 ||
@@ -213,142 +217,121 @@ int gpt_open(struct gpt *gpt, const char *pathname)
             gpt->header.ptbl_count > GPT_MAX_PARTITIONS ||
             gpt->header.ptbl_entry_size > gpt->lbsize) {
         fprintf(stderr, "W: bad primary gpt\n");
-        goto primary_header_out;
     }
 #endif
-    primary_header_valid = 1;
-primary_header_out:
 
-    /* Validate backup GPT for block devices */
-    if (S_ISBLK(st.st_mode) &&
-            gpt->header.backup_lba > 2 &&
+    next_lba = gpt->header.first_usable_lba;
+
+    off = lseek64(fd, gpt->header.ptbl_lba * gpt->lbsize, SEEK_SET);
+    if (off < 0) {
+        perror("lseek\n");
+        close(fd);
+        return -1;
+    }
+
+    calc_crc = 0;
+    for (n = 0; n < gpt->header.ptbl_count; ++n) {
+        gpt->partitions[n] = (struct gpt_partition *)malloc(sizeof(struct gpt_partition));
+        memset(gpt->partitions[n], 0, sizeof(struct gpt_partition));
+        rc = read(fd, gpt->partitions[n], gpt->header.ptbl_entry_size);
+        if (rc < 0 || (uint32_t)rc != gpt->header.ptbl_entry_size) {
+            fprintf(stderr, "failed to read partition entry %u\n", n);
+            close(fd);
+            return -1;
+        }
+        calc_crc = crc32(calc_crc, gpt->partitions[n], gpt->header.ptbl_entry_size);
+        if (gpt->partitions[n]->first_lba == 0 && gpt->partitions[n]->last_lba == 0) {
+            continue;
+        }
+        if (gpt->partitions[n]->first_lba < next_lba ||
+                gpt->partitions[n]->last_lba < gpt->partitions[n]->first_lba ||
+                gpt->partitions[n]->last_lba > gpt->header.last_usable_lba) {
+            fprintf(stderr, "bad lba in partition entry %u\n", n);
+            close(fd);
+            return -1;
+        }
+        gpt->last_used_idx = n;
+    }
+
+    if (gpt->header.ptbl_crc != calc_crc) {
+        fprintf(stderr, "W: bad ptbl crc\n");
+    }
+
+    /* Validate backup GPT */
+    if (gpt->header.backup_lba > 2 &&
             gpt->header.backup_lba < gpt->lblen) {
         off = lseek64(fd, gpt->header.backup_lba * gpt->lbsize, SEEK_SET);
         if (off < 0) {
             fprintf(stderr, "bad backup seek\n");
-            goto backup_header_out;
+            goto out;
         }
         rc = read(fd, buf, gpt->lbsize);
         if (rc != (ssize_t)gpt->lbsize) {
             fprintf(stderr, "bad backup read\n");
-            goto backup_header_out;
+            goto out;
         }
-        memcpy(&gpt->backup_header, buf, sizeof(struct gpt_header));
-        if (gpt_header_is_valid(&gpt->backup_header, gpt->lbsize) != 0) {
+        memcpy(&backup_header, buf, sizeof(struct gpt_header));
+        if (gpt_header_is_valid(&backup_header, gpt->lbsize) != 0) {
             fprintf(stderr, "bad backup header\n");
-            goto backup_header_out;
         }
 #if defined(ANDROID) && defined(QCOM)
-        if (gpt->backup_header.current_lba != gpt->header.backup_lba ||
-                gpt->backup_header.backup_lba != 1 ||
-                gpt->backup_header.first_usable_lba != gpt->header.first_usable_lba ||
-                gpt->backup_header.last_usable_lba != gpt->header.last_usable_lba ||
-                memcmp(gpt->backup_header.disk_guid, gpt->header.disk_guid, 16) != 0 ||
-                gpt->backup_header.ptbl_lba >= gpt->lblen ||
-                gpt->backup_header.ptbl_count != gpt->header.ptbl_count ||
-                gpt->backup_header.ptbl_entry_size != gpt->header.ptbl_entry_size) {
+        if (backup_header.current_lba != gpt->header.backup_lba ||
+                backup_header.backup_lba != 1 ||
+                backup_header.first_usable_lba != gpt->header.first_usable_lba ||
+                backup_header.last_usable_lba != gpt->header.last_usable_lba ||
+                memcmp(backup_header.disk_guid, gpt->header.disk_guid, 16) != 0 ||
+                backup_header.ptbl_lba >= gpt->lblen ||
+                backup_header.ptbl_count != gpt->header.ptbl_count ||
+                backup_header.ptbl_entry_size != gpt->header.ptbl_entry_size) {
             fprintf(stderr, "W: bad backup gpt\n");
-            goto backup_header_out;
+            goto out;
         }
 #else
-        if (gpt->backup_header.current_lba != gpt->header.backup_lba ||
-                gpt->backup_header.backup_lba != 1 ||
-                gpt->backup_header.first_usable_lba != gpt->header.first_usable_lba ||
-                gpt->backup_header.last_usable_lba != gpt->header.last_usable_lba ||
-                memcmp(gpt->backup_header.disk_guid, gpt->header.disk_guid, 16) != 0 ||
-                gpt->backup_header.ptbl_lba >= gpt->lblen ||
-                gpt->backup_header.ptbl_count != gpt->header.ptbl_count ||
-                gpt->backup_header.ptbl_entry_size != gpt->header.ptbl_entry_size) {
+        if (backup_header.current_lba != gpt->header.backup_lba ||
+                backup_header.backup_lba != 1 ||
+                backup_header.first_usable_lba != gpt->header.first_usable_lba ||
+                backup_header.last_usable_lba != gpt->header.last_usable_lba ||
+                memcmp(backup_header.disk_guid, gpt->header.disk_guid, 16) != 0 ||
+                backup_header.ptbl_lba >= gpt->lblen ||
+                backup_header.ptbl_count != gpt->header.ptbl_count ||
+                backup_header.ptbl_entry_size != gpt->header.ptbl_entry_size) {
             fprintf(stderr, "W: bad backup gpt\n");
-            goto backup_header_out;
+            goto out;
         }
 #endif
-        backup_header_valid = 1;
-    }
-backup_header_out:
-
-    next_lba = gpt->header.first_usable_lba;
-
-    if (primary_header_valid) {
-        off = lseek64(fd, gpt->header.ptbl_lba * gpt->lbsize, SEEK_SET);
-        if (off < 0) {
-            perror("lseek\n");
-            close(fd);
-            return -1;
-        }
-
-        calc_crc = 0;
-        for (n = 0; n < gpt->header.ptbl_count; ++n) {
-            gpt->partitions[n] = (struct gpt_partition *)malloc(sizeof(struct gpt_partition));
-            memset(gpt->partitions[n], 0, sizeof(struct gpt_partition));
-            rc = read(fd, gpt->partitions[n], gpt->header.ptbl_entry_size);
-            if (rc < 0 || (uint32_t)rc != gpt->header.ptbl_entry_size) {
-                fprintf(stderr, "failed to read partition entry %u\n", n);
-                close(fd);
-                return -1;
-            }
-            calc_crc = crc32(calc_crc, gpt->partitions[n], gpt->header.ptbl_entry_size);
-            if (gpt->partitions[n]->first_lba == 0 && gpt->partitions[n]->last_lba == 0) {
-                continue;
-            }
-            if (gpt->partitions[n]->first_lba < next_lba ||
-                    gpt->partitions[n]->last_lba < gpt->partitions[n]->first_lba ||
-                    gpt->partitions[n]->last_lba > gpt->header.last_usable_lba) {
-                fprintf(stderr, "bad lba in partition entry %u\n", n);
-                close(fd);
-                return -1;
-            }
-            gpt->last_used_idx = n;
-        }
-
-        if (gpt->header.ptbl_crc != calc_crc) {
-            fprintf(stderr, "bad ptbl crc\n");
-            close(fd);
-            return -1;
-        }
     }
 
-    if (backup_header_valid) {
-        int warned = 0;
-        off = lseek64(fd, gpt->backup_header.ptbl_lba * gpt->lbsize, SEEK_SET);
-        if (off < 0) {
-            perror("lseek\n");
-            close(fd);
-            return -1;
-        }
-        calc_crc = 0;
-        for (n = 0; n < gpt->backup_header.ptbl_count; ++n) {
-            struct gpt_partition backup_part;
-            rc = read(fd, &backup_part, gpt->backup_header.ptbl_entry_size);
-            if (rc < 0 || (uint32_t)rc != gpt->backup_header.ptbl_entry_size) {
-                fprintf(stderr, "failed to read backup partition entry %u\n", n);
-                close(fd);
-                return -1;
-            }
-            if (memcmp(gpt->partitions[n], &backup_part, sizeof(struct gpt_partition)) != 0) {
-                if (!warned) {
-                    fprintf(stderr, "mismatched backup partition entry %u\n", n);
-                    warned = 1;
-                }
-            }
-        }
-    }
-
-#if defined(ANDROID) && defined(QCOM)
-    gpt->pad_idx = gpt_part_find(gpt, "pad");
-    if (gpt->pad_idx == GPT_PART_INVALID) {
-        fprintf(stderr, "no pad found\n");
+    int warned = 0;
+    off = lseek64(fd, backup_header.ptbl_lba * gpt->lbsize, SEEK_SET);
+    if (off < 0) {
+        perror("lseek\n");
         close(fd);
         return -1;
     }
-#endif
+    calc_crc = 0;
+    for (n = 0; n < backup_header.ptbl_count; ++n) {
+        struct gpt_partition backup_part;
+        rc = read(fd, &backup_part, backup_header.ptbl_entry_size);
+        if (rc < 0 || (uint32_t)rc != backup_header.ptbl_entry_size) {
+            fprintf(stderr, "failed to read backup partition entry %u\n", n);
+            close(fd);
+            return -1;
+        }
+        if (memcmp(gpt->partitions[n], &backup_part, sizeof(struct gpt_partition)) != 0) {
+            if (!warned) {
+                fprintf(stderr, "mismatched backup partition entry %u\n", n);
+                warned = 1;
+            }
+        }
+    }
+out:
 
     close(fd);
 
     return 0;
 }
 
-int gpt_write(const struct gpt *gpt)
+int gpt_write(struct gpt *gpt)
 {
     int fd;
     int rc;
@@ -460,10 +443,6 @@ void gpt_show(const struct gpt *gpt)
     uint32_t n;
 
     gpt_header_show("Primary GPT", &gpt->header);
-
-    if (gpt->backup_header.size != 0) {
-        gpt_header_show("Backup GPT", &gpt->backup_header);
-    }
 
     printf("Partition table: count=%u\n", (unsigned int)gpt->last_used_idx);
     for (n = 0; n < gpt->header.ptbl_count; ++n) {
