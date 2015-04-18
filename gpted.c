@@ -16,6 +16,43 @@
 
 static int cmd_help(struct gpt *gpt, unsigned int argc, const char **argv)
 {
+    printf("  help                                   Show this message\n"
+           "  quit                                   Quit (without saving)\n"
+           "  show                                   Show partition table\n"
+           "  write                                  Write partition table to disk\n"
+           "  part-add <name> ... [follow]           Add a partition (NOT IMPLEMENTED)\n"
+           "  part-del <name> [follow]               Delete a partition\n"
+           "  part-move <name> <start> [follow]      Move a partition\n"
+           "  part-resize <name> <size> [follow]     Resize a partition\n"
+           "  part-save <name> <filename>            Save a partition\n"
+           "  part-load <name> <filename>            Load a partition\n"
+           "\n"
+           "  <name> is a partition name.  Only ASCII names are supported.\n"
+           "\n"
+           "  <start> is a number, representing the offset from the beginning of the\n"
+           "          device.  The default unit is blocks.  Multipliers 'k', 'm', 'g'\n"
+           "          may be used.\n"
+           "\n"
+           "  <size> is a number, representing a partition size.  The default unit is\n"
+           "         blocks.  Multipliers 'k', 'm', 'g' may be used.\n"
+           "\n"
+           "  The follow argument indicates that all partitions following the named\n"
+           "  partition are to be moved by the same amount that the end of the current\n"
+           "  partition moves.  For example, given partition 'data' of size 1m and\n"
+           "  partition 'extra' following 'data', then 'part-resize data 3m follow'\n"
+           "  would result in partition 'extra' moving by 2m.\n"
+           "\n"
+#if defined(ANDROID) && defined(QCOM)
+           "  firmware-save                          Save firmware partitions\n"
+           "  firmware-load                          Load firmware partitions\n"
+           "\n"
+           "  The firmware commands are equivalent to issuing part-save/part-load for\n"
+           "  for all partitions following 'pad' that may not be reasonably expected to\n"
+           "  be recoverable by the user and/or may be too large to save in RAM (that is,\n"
+           "  everything except: recovery, boot, system, userdata, cache, sdcard).  The\n"
+           "  files are saved/loaded from the current directory.\n"
+#endif
+           );
     return 0;
 }
 
