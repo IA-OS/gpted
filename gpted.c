@@ -43,85 +43,6 @@ static int cmd_write(struct gpt *gpt, unsigned int argc, const char **argv)
     return 0;
 }
 
-#if defined(ANDROID) && defined(QCOM)
-static const char *non_firmware[] = {
-    "recovery", "boot",
-    "system", "userdata", "cache", "sdcard",
-    /* persist? */
-    NULL
-};
-
-static int cmd_firmware_save(struct gpt *gpt, unsigned int argc, const char **argv)
-{
-    int all = 0;
-    uint32_t startidx, idx;
-
-    if (argc > 1) {
-        all = !strcmp(argv[1], "all");
-    }
-
-    startidx = (all ? 0 : gpt->pad_idx+1);
-    for (idx = startidx; idx <= gpt->last_used_idx; ++idx) {
-        char name[72/2+1];
-        char filename[72/2+4+1];
-        int skip = 0;
-        const char **entry;
-
-        gpt_part_name(gpt, idx, name);
-        for (entry = non_firmware; *entry; ++entry) {
-            if (!strcmp(name, *entry)) {
-                skip = 1;
-            }
-        }
-        if (skip) {
-            printf("Skip %s\n", name);
-        }
-        else {
-            printf("Save %s\n", name);
-            sprintf(filename, "%s.img", name);
-            gpt_part_save(gpt, idx, filename);
-        }
-    }
-
-    return 0;
-}
-
-static int cmd_firmware_load(struct gpt *gpt, unsigned int argc, const char **argv)
-{
-    int all = 0;
-    uint32_t startidx, idx;
-
-    if (argc > 1) {
-        all = !strcmp(argv[1], "all");
-    }
-
-    startidx = (all ? 0 : gpt->pad_idx+1);
-    for (idx = startidx; idx <= gpt->last_used_idx; ++idx) {
-        char name[72/2+1];
-        char filename[72/2+4+1];
-        int skip = 0;
-        const char **entry;
-
-        gpt_part_name(gpt, idx, name);
-        for (entry = non_firmware; *entry; ++entry) {
-            if (!strcmp(name, *entry)) {
-                skip = 1;
-            }
-        }
-        if (skip) {
-            printf("Skip %s\n", name);
-        }
-        else {
-            printf("Load %s\n", name);
-            sprintf(filename, "%s.img", name);
-            gpt_part_load(gpt, idx, filename);
-        }
-    }
-
-    return 0;
-}
-#endif
-
 static int cmd_part_add(struct gpt *gpt, unsigned int argc, const char **argv)
 {
     printf("E: not implemented\n");
@@ -219,25 +140,6 @@ static int cmd_part_resize(struct gpt *gpt, unsigned int argc, const char **argv
     return 0;
 }
 
-static int cmd_part_load(struct gpt *gpt, unsigned int argc, const char **argv)
-{
-    int rc;
-    uint32_t idx;
-
-    if (argc < 3) {
-        printf("E: not enough args\n");
-        return 0;
-    }
-    idx = gpt_part_find(gpt, argv[1]);
-    rc = gpt_part_load(gpt, idx, argv[2]);
-    if (rc != 0) {
-        printf("E: failed\n");
-        return 0;
-    }
-
-    return 0;
-}
-
 static int cmd_part_save(struct gpt *gpt, unsigned int argc, const char **argv)
 {
     int rc;
@@ -257,6 +159,106 @@ static int cmd_part_save(struct gpt *gpt, unsigned int argc, const char **argv)
     return 0;
 }
 
+static int cmd_part_load(struct gpt *gpt, unsigned int argc, const char **argv)
+{
+    int rc;
+    uint32_t idx;
+
+    if (argc < 3) {
+        printf("E: not enough args\n");
+        return 0;
+    }
+    idx = gpt_part_find(gpt, argv[1]);
+    rc = gpt_part_load(gpt, idx, argv[2]);
+    if (rc != 0) {
+        printf("E: failed\n");
+        return 0;
+    }
+
+    return 0;
+}
+
+#if defined(ANDROID) && defined(QCOM)
+
+static const char *non_firmware[] = {
+    "recovery", "boot",
+    "system", "userdata", "cache", "sdcard",
+    /* persist? */
+    NULL
+};
+
+static int cmd_firmware_save(struct gpt *gpt, unsigned int argc, const char **argv)
+{
+    int all = 0;
+    uint32_t startidx, idx;
+
+    if (argc > 1) {
+        all = !strcmp(argv[1], "all");
+    }
+
+    startidx = (all ? 0 : gpt->pad_idx+1);
+    for (idx = startidx; idx <= gpt->last_used_idx; ++idx) {
+        char name[72/2+1];
+        char filename[72/2+4+1];
+        int skip = 0;
+        const char **entry;
+
+        gpt_part_name(gpt, idx, name);
+        for (entry = non_firmware; *entry; ++entry) {
+            if (!strcmp(name, *entry)) {
+                skip = 1;
+            }
+        }
+        if (skip) {
+            printf("Skip %s\n", name);
+        }
+        else {
+            printf("Save %s\n", name);
+            sprintf(filename, "%s.img", name);
+            gpt_part_save(gpt, idx, filename);
+        }
+    }
+
+    return 0;
+}
+
+static int cmd_firmware_load(struct gpt *gpt, unsigned int argc, const char **argv)
+{
+    int all = 0;
+    uint32_t startidx, idx;
+
+    if (argc > 1) {
+        all = !strcmp(argv[1], "all");
+    }
+
+    startidx = (all ? 0 : gpt->pad_idx+1);
+    for (idx = startidx; idx <= gpt->last_used_idx; ++idx) {
+        char name[72/2+1];
+        char filename[72/2+4+1];
+        int skip = 0;
+        const char **entry;
+
+        gpt_part_name(gpt, idx, name);
+        for (entry = non_firmware; *entry; ++entry) {
+            if (!strcmp(name, *entry)) {
+                skip = 1;
+            }
+        }
+        if (skip) {
+            printf("Skip %s\n", name);
+        }
+        else {
+            printf("Load %s\n", name);
+            sprintf(filename, "%s.img", name);
+            gpt_part_load(gpt, idx, filename);
+        }
+    }
+
+    return 0;
+}
+
+#endif
+
 struct dispatch_entry
 {
     const char *cmd;
@@ -269,17 +271,17 @@ static struct dispatch_entry dispatch_table[] = {
     { "show",   cmd_show },
     { "write",  cmd_write },
 
-#if defined(ANDROID) && defined(QCOM)
-    { "firmware-save", cmd_firmware_save },
-    { "firmware-load", cmd_firmware_load },
-#endif
-
     { "part-add",    cmd_part_add },
     { "part-del",    cmd_part_del },
     { "part-move",   cmd_part_move },
     { "part-resize", cmd_part_resize },
     { "part-load",   cmd_part_load },
     { "part-save",   cmd_part_save },
+
+#if defined(ANDROID) && defined(QCOM)
+    { "firmware-save", cmd_firmware_save },
+    { "firmware-load", cmd_firmware_load },
+#endif
 
     { NULL, NULL }
 };
