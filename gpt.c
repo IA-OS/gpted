@@ -362,6 +362,12 @@ int gpt_write(const struct gpt *gpt)
         return -1;
     }
 
+    rc = ioctl(fd, BLKRRPART);
+    if (rc != 0) {
+        fprintf(stderr, "failed to re-read partition table\n");
+        return -1;
+    }
+
     memcpy(&hdr, &gpt->header, sizeof(hdr));
 
     hdr.ptbl_crc = 0;
@@ -428,6 +434,12 @@ int gpt_write(const struct gpt *gpt)
             fprintf(stderr, "bad backup partition write\n");
             return -1;
         }
+    }
+
+    rc = ioctl(fd, BLKRRPART);
+    if (rc != 0) {
+        fprintf(stderr, "failed to re-read partition table\n");
+        return -1;
     }
 
     close(fd);
