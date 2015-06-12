@@ -233,7 +233,7 @@ static int cmd_firmware_save(struct gpt *gpt, unsigned int argc, const char **ar
         all = !strcmp(argv[1], "all");
     }
 
-    startidx = (all ? 0 : gpt->pad_idx+1);
+    startidx = (all ? 0 : gpt->last_fw_idx+1);
     for (idx = startidx; idx <= gpt->last_used_idx; ++idx) {
         char name[72/2+1];
         char filename[72/2+4+1];
@@ -268,7 +268,7 @@ static int cmd_firmware_load(struct gpt *gpt, unsigned int argc, const char **ar
         all = !strcmp(argv[1], "all");
     }
 
-    startidx = (all ? 0 : gpt->pad_idx+1);
+    startidx = (all ? 0 : gpt->last_fw_idx+1);
     for (idx = startidx; idx <= gpt->last_used_idx; ++idx) {
         char name[72/2+1];
         char filename[72/2+4+1];

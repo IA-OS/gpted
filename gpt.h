@@ -52,7 +52,7 @@ struct gpt
     uint32_t                    lblen;
     struct gpt_header           header;
 #if defined(ANDROID) && defined(QCOM)
-    uint32_t                    pad_idx;
+    uint32_t                    last_fw_idx;
 #endif
     uint32_t                    last_used_idx;
     struct gpt_partition*       partitions[GPT_MAX_PARTITIONS];

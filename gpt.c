@@ -22,7 +22,7 @@
 #define MAX_LBSIZE      4096
 
 #if defined(ANDROID) && defined(QCOM)
-#define IS_PART_RO(gpt,n) ((n) <= (gpt->pad_idx))
+#define IS_PART_RO(gpt,n) ((n) <= (gpt->last_fw_idx))
 #else
 #define IS_PART_RO(gpt,n) (0)
 #endif
@@ -133,6 +133,24 @@ static int gpt_header_is_valid(struct gpt_header *header, uint32_t lbsize)
     return 0;
 }
 
+#if defined(ANDROID) && defined(QCOM)
+static const char *firmware_prefixes[] = {
+    "modem", "sbl", "dbi", "DDR", "aboot", "rpm", "boot", NULL
+};
+static int gpt_part_is_firmware(struct gpt *gpt, uint32_t idx)
+{
+    const char **entry;
+    for (entry = firmware_prefixes; *entry; ++entry) {
+        char name[72/2+1];
+        gpt_part_name(gpt, idx, name);
+        if (!strncmp(name, *entry, strlen(*entry))) {
+            return 1;
+        }
+    }
+    return 0;
+}
+#endif
+
 int gpt_open(struct gpt *gpt, const char *pathname)
 {
     int fd;
@@ -199,12 +217,6 @@ int gpt_open(struct gpt *gpt, const char *pathname)
             gpt->header.ptbl_entry_size > gpt->lbsize) {
         fprintf(stderr, "W: bad primary gpt\n");
     }
-    gpt->pad_idx = gpt_part_find(gpt, "pad");
-    if (gpt->pad_idx == GPT_PART_INVALID) {
-        fprintf(stderr, "no pad found\n");
-        close(fd);
-        return -1;
-    }
 #else
     if (gpt->header.current_lba != 1 ||
             gpt->header.backup_lba >= gpt->lblen ||
@@ -250,6 +262,11 @@ int gpt_open(struct gpt *gpt, const char *pathname)
             close(fd);
             return -1;
         }
+#if defined(ANDROID) && defined(QCOM)
+        if (gpt_part_is_firmware(gpt, n)) {
+            gpt->last_fw_idx = n;
+        }
+#endif
         gpt->last_used_idx = n;
     }
 
